@@ -2,14 +2,12 @@
 
 A [pi](https://github.com/earendil-works/pi-coding-agent) extension that automatically saves and restores llama.cpp slot KV cache across sessions. Keeps your conversation context warm — no re-prompting on resume.
 
-## Features
+## What it does
 
-- **Auto-save** — Saves slot KV cache to disk at the end of each agent turn (fire-and-forget, non-blocking)
-- **Smart restore** — Detects cold slots (llama.cpp restart) and restores only when needed
-- **Mid-session recovery** — Survives llama.cpp restarts without requiring pi `/reload`
-- **Deterministic routing** — Injects `id_slot` into provider requests so all requests hit the same slot
-- **Erase on quit** — Optionally clears the in-memory KV cache when you quit (off by default)
-- **Zero config** — Auto-detects llama.cpp via `GET /slots` probe; derive server URL from your provider settings
+- **Saves your conversation context** — Writes the slot KV cache to disk at the end of each agent loop, so you don't lose progress if llama.cpp crashes
+- **Restores on resume** — Loads the cache back when you switch to a previous session, avoiding costly prompt re-prefill
+- **Survives llama.cpp restarts** — Detects cold slots and restores automatically, even mid-session without pi `/reload`
+- **Configurable save frequency** — Save once per agent loop (default) or after every tool call
 
 ## Requirements
 
