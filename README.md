@@ -68,17 +68,18 @@ pi starts / reloads
   ├─► session_start
   │   ├─► Load settings
   │   ├─► Restore slot state from session branch (if exists)
-  │   │   ├─► GET /slots → check n_prompt_tokens
-  │   │   ├─► cold (tokens <= 1)  → POST /slots/{id}?action=restore
-  │   │   └─► warm (tokens > 1)   → skip restore
+  │   │   └─► GET /slots → verify server reachable (no restore yet)
   │   └─► Or: discover fresh slot
   │       └─► GET /slots  ← probe llama.cpp capability
   │
-  ├─► turn_start (first turn only)
-  │   └─► Safety net: check slot warmth again
-  │       (handles mid-session llama.cpp restart without /reload)
+  ├─► turn_start (every turn)
+  │   ├─► GET /slots → check slot state
+  │   ├─► processing → skip restore (avoid interference)
+  │   └─► otherwise  → POST /slots/{id}?action=restore + await
+  │       (idempotent: no-op if cache already matches .bin)
   │
   ├─► before_provider_request (every request)
+  │   ├─► Wait for in-flight restore (if any)  ← prevents race with turn_start
   │   └─► Inject id_slot into payload  ← deterministic slot routing
   │
   ├─► turn_end (after each agent turn)
@@ -93,9 +94,11 @@ pi starts / reloads
 
 | Scenario | What happens |
 |----------|--------------|
-| Restart llama.cpp, then `/reload` in pi | `session_start` detects cold slot → restores from `.bin` |
-| Restart llama.cpp, type prompt (no `/reload`) | `turn_start` detects cold slot → restores before first request |
-| Restart llama.cpp + pi together | `session_start` discovers slot → restores from `.bin` on resume |
+| Restart llama.cpp, then `/reload` in pi | `turn_start` restores from `.bin` before first request |
+| Restart llama.cpp, type prompt (no `/reload`) | `turn_start` restores from `.bin` before first request |
+| Restart llama.cpp + pi together | `turn_start` restores from `.bin` before first request |
+
+Restore always happens in `turn_start` (not `session_start`) because that's when llama.cpp is guaranteed to be fully loaded and ready.
 
 ### Slot filenames
 
@@ -111,7 +114,7 @@ Files are stored in your llama.cpp `--slot-save-path` directory.
 
 - Slot saves are fire-and-forget with a 3-second timeout — never block the agent loop
 - `GET /slots` probe at startup adds ~50ms
-- Cold slot check on first turn adds ~50ms (one-time per session)
+- Restore on every turn: GET /slots (~50ms) + POST restore (~10-100ms, idempotent)
 - `id_slot` injection is synchronous and trivial
 
 ## Status Messages
@@ -120,8 +123,9 @@ The extension shows its state in the pi footer status bar:
 
 | Status | Meaning |
 |--------|---------|
-| `slot 0 warm` | Cache intact, no restore needed |
-| `slot 0 restored` | Cache loaded from `.bin` |
+| `slot 0 ready` | Slot registered, server reachable — restore pending on next turn |
+| `slot 0 restored` | KV cache loaded from `.bin` |
+| `slot 0 restore failed` | Restore call failed (file may not exist) |
 | `slot 0 allocated` | Fresh slot assigned for new session |
 | `discovery failed` | `GET /slots` failed — extension dormant |
 | `no server URL` | Can't determine llama.cpp server address |
@@ -167,6 +171,17 @@ Verify llama.cpp is started with `--slot-save-path /path/to/dir` and that the di
 ### Cache lost after `/reload`
 
 As of v1.0.1, `/reload` no longer triggers a save (which could overwrite the `.bin` with incomplete state). Per-turn saves via `turn_end` are the authoritative source.
+
+### Repeated restore messages between tool calls
+
+It's normal to see restore messages multiple times within a single agent turn:
+
+```
+[llamacpp-slots] turn_start: restoring slot 0 (state=unknown, n_prompt_tokens=55526)
+[llamacpp-slots] Restored slot 0 from session_....bin
+```
+
+This happens because pi fires `turn_start` once per **sub-turn** (each tool call, each provider request within a multi-step agent loop). The restore is idempotent — on the second call the slot is already warm, so llama.cpp returns immediately without reloading the `.bin` file. The `n_prompt_tokens` value shows how many tokens the slot currently has cached (grows as the conversation progresses).
 
 ## License
 
