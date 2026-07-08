@@ -48,6 +48,7 @@ Optional settings file at `~/.pi/agent/llama-slots/settings.json`:
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
 | `eraseOnQuit` | `boolean` | `false` | Erase in-memory KV cache on quit. Keep `false` to preserve warm cache across restarts. |
+| `saveOnAgentEnd` | `boolean` | `true` | Save once per agent loop (`agent_end`) instead of per tool call (`turn_end`). Set `false` for more frequent saves. |
 | `serverUrl` | `string` | *(derived)* | Override the llama.cpp server URL. By default, derived from `ctx.model.baseUrl`. Set this when proxying through litellm or another reverse proxy. |
 
 ### Server URL resolution

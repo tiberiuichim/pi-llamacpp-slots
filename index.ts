@@ -47,6 +47,8 @@ interface SlotSettings {
 	eraseOnQuit?: boolean;
 	/** Explicit llama.cpp server URL override. When set, bypasses ctx.model.baseUrl derivation. */
 	serverUrl?: string;
+	/** Save slot on agent_end (once per agent loop) instead of turn_end (per tool call). Default: true. */
+	saveOnAgentEnd?: boolean;
 }
 
 // ── In-Memory State ──────────────────────────────────────────
@@ -90,13 +92,14 @@ function log(message: string): void {
  * Returns defaults if the file doesn't exist or is invalid.
  */
 function loadSettings(): SlotSettings {
-	const defaults: SlotSettings = { eraseOnQuit: false };
+	const defaults: SlotSettings = { eraseOnQuit: false, saveOnAgentEnd: true };
 	try {
 		const raw = fs.readFileSync(SETTINGS_FILE, "utf-8");
 		const parsed = JSON.parse(raw) as SlotSettings;
 		return {
 			eraseOnQuit: parsed.eraseOnQuit ?? defaults.eraseOnQuit,
 			serverUrl: parsed.serverUrl,
+			saveOnAgentEnd: parsed.saveOnAgentEnd ?? defaults.saveOnAgentEnd,
 		};
 	} catch {
 		return defaults;
@@ -492,12 +495,22 @@ export default function llamacppSlotsExtension(pi: ExtensionAPI): void {
 		firstTurn = false;
 	});
 
-	// ── Turn End: Fire-and-Forget Slot Save ──────────────────
+	// ── Turn End / Agent End: Fire-and-Forget Slot Save ──────
 
+	// Determine save timing from settings on each handler (settings can change between reloads).
 	pi.on("turn_end", async (_event, _ctx) => {
 		if (!slotsActive || !slotState) return;
-		// Fire-and-forget: do NOT await — saveSlot uses unawaited fetch()
+		const settings = loadSettings();
+		if (settings.saveOnAgentEnd) return;  // Defer to agent_end
 		log(`[llamacpp-slots] turn_end: saving slot ${slotState.slotId} to ${slotState.binFilename}`);
+		saveSlot(slotState);
+	});
+
+	pi.on("agent_end", async (_event, _ctx) => {
+		if (!slotsActive || !slotState) return;
+		const settings = loadSettings();
+		if (!settings.saveOnAgentEnd) return;  // Already saved on turn_end
+		log(`[llamacpp-slots] agent_end: saving slot ${slotState.slotId} to ${slotState.binFilename}`);
 		saveSlot(slotState);
 	});
 
