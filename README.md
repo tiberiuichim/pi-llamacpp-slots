@@ -92,9 +92,12 @@ pi starts / reloads
   │   ├─► Wait for in-flight restore (if any)  ← prevents race with turn_start
   │   └─► Inject id_slot into payload  ← deterministic slot routing
   │
-  ├─► turn_end (after each agent turn)
-  │   └─► POST /slots/{id}?action=save  ← fire-and-forget, 3s timeout
+  ├─► turn_end (after each sub-turn)
+  │   └─► if saveOnAgentEnd=false → POST /slots/{id}?action=save
   │
+  ├─► agent_end (after full agent loop)
+  │   └─► if saveOnAgentEnd=true (default) → POST /slots/{id}?action=save
+  │       (fire-and-forget, 3s timeout)
   └─► session_shutdown
       ├─► POST /slots/{id}?action=save  ← final save (skipped on /reload)
       └─► POST /slots/{id}?action=erase  ← only on quit + eraseOnQuit=true
