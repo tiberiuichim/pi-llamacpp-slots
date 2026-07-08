@@ -1,0 +1,24 @@
+{
+  "name": "pi-llamacpp-slots",
+  "version": "1.0.0",
+  "description": "pi extension — automatic llama.cpp slot KV cache save/restore",
+  "main": "index.ts",
+  "scripts": {
+    "check": "tsc --noEmit"
+  },
+  "keywords": [
+    "pi-extension",
+    "llama.cpp",
+    "kv-cache",
+    "slot-persistence"
+  ],
+  "author": "Tiberiu Ichim",
+  "license": "ISC",
+  "dependencies": {
+    "@types/node": "^26.1.1",
+    "typescript": "^7.0.2"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "^0.80.3"
+  }
+}

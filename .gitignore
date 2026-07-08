@@ -1,0 +1,4 @@
+node_modules/
+.rpiv/
+*.bin
+.env
