@@ -16,29 +16,38 @@ A [pi](https://github.com/earendil-works/pi-coding-agent) extension that automat
 
 ## Installation
 
-### Quick install (symlink)
+Pi auto-discovers extensions in `~/.pi/agent/extensions/` and hot-reloads them with `/reload`. Pick one:
+
+**Option A: directory (recommended, easy to update)**
 
 ```bash
-# Clone or copy this repo somewhere
-git clone <repo> ~/pi-llamacpp-slots
-
-# Symlink into pi's global extensions directory
-ln -sfn ~/pi-llamacpp-slots ~/.pi/agent/extensions/llamacpp-slots
+git clone <repo> ~/.pi/agent/extensions/llamacpp-slots
 ```
 
-Pi auto-discovers `~/.pi/agent/extensions/*/index.ts` and hot-reloads on `/reload`.
+Pi loads `~/.pi/agent/extensions/llamacpp-slots/index.ts` automatically.
 
-### Manual install
+**Option B: single file**
 
-Copy `index.ts` to `~/.pi/agent/extensions/llamacpp-slots.ts`.
+```bash
+cp index.ts ~/.pi/agent/extensions/llamacpp-slots.ts
+```
 
-## Configuration
+**Option C: arbitrary path via settings**
 
-Optional settings file at `~/.pi/agent/llama-slots/settings.json`:
+Clone or copy the repo anywhere, then add the path to your pi `settings.json` (`~/.pi/agent/settings.json`):
 
 ```json
 {
-  "eraseOnQuit": false,
+  "extensions": ["/absolute/path/to/pi-llamacpp-slots"]
+}
+```
+
+## Configuration
+
+Optional settings file at `~/.pi/agent/llama-slots/settings.json` (create the directory if needed):
+
+```json
+{
   "serverUrl": "http://localhost:4000"
 }
 ```
