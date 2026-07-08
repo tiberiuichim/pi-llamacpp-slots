@@ -198,6 +198,14 @@ You'll see messages like these:
 - **"warm — skipping restore"** means the slot has tokens (`n_prompt_tokens > 0`) or is idle (field missing, `task_prev=null`) — no disk I/O.
 - **"cold — restoring"** appears after a mid-session llama.cpp restart. This is rare and only happens if you restart llama.cpp without reloading pi.
 
+## TODO
+
+- **Slot reallocation detection** — If llama.cpp reassigns a different slot ID, verify and update in `turn_start`
+- **Context overflow handling** — Graceful recovery when conversation exceeds `--ctx-size`
+- **Old .bin cleanup** — Option to remove `.bin` files for sessions that no longer exist
+- **Remove dead code** — `saveSettings()` is defined but never called
+- **Tests** — Basic integration test script to validate save/restore flow
+
 ## License
 
 ISC
