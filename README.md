@@ -115,10 +115,10 @@ Restore happens in `turn_start` (right before the first provider request) rather
 
 ### Slot filenames
 
-Each session gets a deterministic `.bin` filename derived from its UUID:
+The save filename is the session ID (UUID without hyphens) with a `session_` prefix and `.bin` extension:
 
 ```
-session_<uuid-no-hyphens>.bin
+session_<sessionId-no-hyphens>.bin
 ```
 
 Files are stored in your llama.cpp `--slot-save-path` directory.
