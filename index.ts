@@ -468,12 +468,9 @@ export default function llamacppSlotsExtension(pi: ExtensionAPI): void {
 				return ok;
 			});
 			await restoringPromise;
-		} else if (nTokens != null && nTokens > 0) {
-			// Subsequent turn, slot has tokens — warm, skip restore.
-			log(`[llamacpp-slots] Slot ${state.slotId} warm (n_prompt_tokens=${nTokens}) — skipping restore`);
-		} else {
-			// Subsequent turn, slot is cold (llama.cpp restarted mid-session).
-			log(`[llamacpp-slots] Slot ${state.slotId} cold (n_prompt_tokens=${nTokens ?? "?"}) — restoring`);
+		} else if (nTokens === 0) {
+			// Subsequent turn, explicitly 0 — llama.cpp restarted mid-session.
+			log(`[llamacpp-slots] Slot ${state.slotId} cold (n_prompt_tokens=0) — restoring`);
 			restoringPromise = restoreSlot(state).then((ok) => {
 				if (ok) {
 					log(`[llamacpp-slots] Restored slot ${state.slotId} from ${state.binFilename}`);
@@ -486,6 +483,9 @@ export default function llamacppSlotsExtension(pi: ExtensionAPI): void {
 				return ok;
 			});
 			await restoringPromise;
+		} else {
+			// nTokens > 0 (warm) OR missing/idle (task_prev=null) — skip restore.
+			log(`[llamacpp-slots] Slot ${state.slotId} warm (n_prompt_tokens=${nTokens ?? "idle"}) — skipping restore`);
 		}
 
 		restoringPromise = null;
