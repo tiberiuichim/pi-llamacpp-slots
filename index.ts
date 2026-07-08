@@ -126,6 +126,32 @@ async function discoverSlots(serverUrl: string): Promise<number | null> {
 }
 
 /**
+ * Check if a slot's KV cache is cold (empty or nearly empty).
+ * A slot is cold when n_prompt_tokens <= 1, meaning llama.cpp
+ * restarted and lost its in-memory cache. Returns true if cold,
+ * false if warm, null if the check fails.
+ */
+async function isSlotCold(serverUrl: string, slotId: number): Promise<boolean | null> {
+	try {
+		const response = await fetch(`${serverUrl}/slots`, {
+			signal: AbortSignal.timeout(3000),
+		});
+		if (!response.ok) return null;
+
+		const data = await response.json();
+		if (Array.isArray(data)) {
+			const slot = data.find((s: any) => s.id === slotId);
+			if (slot) {
+				return (slot.n_prompt_tokens ?? 0) <= 1;
+			}
+		}
+		return null;
+	} catch {
+		return null;
+	}
+}
+
+/**
  * Save the current slot's KV cache to a .bin file.
  * Fire-and-forget — does not await. Uses a dedicated AbortController
  * with timeout (NOT ctx.signal) to avoid cancellation on user Escape.
@@ -281,24 +307,36 @@ export default function llamacppSlotsExtension(pi: ExtensionAPI): void {
 		const restored = restoreFromBranch(ctx);
 
 		if (restored) {
-			// We have a saved slot state — try to restore it
+			// We have a saved slot state — check if the slot's cache is still warm
 			slotState = restored;
 			// Always use the current model's URL (in case server was reconfigured)
 			slotState.serverUrl = serverUrl;
 			slotsActive = true;
 
-			// Attempt to restore the slot's KV cache from disk
-			const ok = await restoreSlot(slotState);
-			if (ok) {
-				console.log(`[llamacpp-slots] Restored slot ${slotState.slotId} from ${slotState.binFilename}`);
-				ctx.ui.notify(`llamacpp-slots: restored slot ${slotState.slotId}`, "info");
-				ctx.ui.setStatus("llamacpp-slots", `slot ${slotState.slotId} restored`);
+			// Check if the slot is cold (llama.cpp restarted, cache lost)
+			const cold = await isSlotCold(serverUrl, restored.slotId);
+			if (cold === true) {
+				// Slot is cold — restore from .bin
+				const ok = await restoreSlot(slotState);
+				if (ok) {
+					console.log(`[llamacpp-slots] Restored cold slot ${slotState.slotId} from ${slotState.binFilename}`);
+					ctx.ui.notify(`llamacpp-slots: restored slot ${slotState.slotId} (was cold)`, "info");
+					ctx.ui.setStatus("llamacpp-slots", `slot ${slotState.slotId} restored`);
+				} else {
+					console.warn(`[llamacpp-slots] Slot ${slotState.slotId} is cold but restore failed`);
+					ctx.ui.notify(`llamacpp-slots: slot ${slotState.slotId} cold, restore failed`, "warning");
+					ctx.ui.setStatus("llamacpp-slots", `slot ${slotState.slotId} cold`);
+				}
+			} else if (cold === false) {
+				// Slot is warm — no restore needed
+				console.log(`[llamacpp-slots] Slot ${slotState.slotId} is warm — skipping restore`);
+				ctx.ui.setStatus("llamacpp-slots", `slot ${slotState.slotId} warm`);
 			} else {
-				ctx.ui.notify(`llamacpp-slots: slot ${slotState.slotId} active (no .bin to restore)`, "info");
-				ctx.ui.setStatus("llamacpp-slots", `slot ${slotState.slotId} active`);
+				// Could not determine — try restore anyway (safe no-op if cache is warm)
+				await restoreSlot(slotState);
+				console.log(`[llamacpp-slots] Slot ${slotState.slotId} state unknown — restored as fallback`);
+				ctx.ui.setStatus("llamacpp-slots", `slot ${slotState.slotId} restored`);
 			}
-			// If restore failed (e.g., .bin doesn't exist), we still keep the slotState
-			// so that id_slot injection works for new requests
 			return;
 		}
 
