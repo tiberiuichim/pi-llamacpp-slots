@@ -76,9 +76,9 @@ pi starts / reloads
   │   ├─► GET /slots → check slot state
   │   ├─► processing → skip restore (avoid interference)
   │   ├─► first turn → always restore (n_prompt_tokens unreliable after reload)
-  │   ├─► tokens > 0 → skip restore (slot is warm)
-  │   └─► tokens == 0 → POST /slots/{id}?action=restore + await
-  │       (loads KV cache from .bin after mid-session llama.cpp restart)
+  │   ├─► tokens == 0 → POST /slots/{id}?action=restore + await
+  │   │   (loads KV cache from .bin after mid-session llama.cpp restart)
+  │   └─► tokens > 0 or missing → skip restore (warm or idle)
   │
   ├─► before_provider_request (every request)
   │   ├─► Wait for in-flight restore (if any)  ← prevents race with turn_start
@@ -179,11 +179,12 @@ You'll see messages like these:
 [llamacpp-slots] Slot 0 first turn — restoring
 [llamacpp-slots] Restored slot 0 from session_....bin
 [llamacpp-slots] Slot 0 warm (n_prompt_tokens=55526) — skipping restore
+[llamacpp-slots] Slot 0 warm (n_prompt_tokens=idle) — skipping restore
 [llamacpp-slots] Slot 0 cold (n_prompt_tokens=0) — restoring
 ```
 
 - **"first turn — restoring"** appears on the first turn after pi starts or reloads. The restore ensures the KV cache is loaded, since `n_prompt_tokens` can be missing from `GET /slots` even on warm slots (it's only reported when the slot has an active or previous task).
-- **"warm — skipping restore"** means the slot already has tokens — no disk I/O.
+- **"warm — skipping restore"** means the slot has tokens (`n_prompt_tokens > 0`) or is idle (field missing, `task_prev=null`) — no disk I/O.
 - **"cold — restoring"** appears after a mid-session llama.cpp restart. This is rare and only happens if you restart llama.cpp without reloading pi.
 
 ## License
