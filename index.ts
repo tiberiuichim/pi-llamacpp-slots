@@ -63,6 +63,25 @@ const SAVE_TIMEOUT_MS = 3000;
 const CUSTOM_ENTRY_TYPE = "llamacpp-slot";
 const SETTINGS_DIR = path.join(os.homedir(), ".pi", "agent", "llama-slots");
 const SETTINGS_FILE = path.join(SETTINGS_DIR, "settings.json");
+const LOG_FILE = path.join(SETTINGS_DIR, "debug.log");
+
+// ── Logging ──────────────────────────────────────────────────
+
+/**
+ * Log a message to both console and debug.log file.
+ * The log file is append-only and lives at ~/.pi/agent/llama-slots/debug.log.
+ */
+function log(message: string): void {
+	const timestamp = new Date().toISOString();
+	const line = `[${timestamp}] ${message}\n`;
+	console.log(message);
+	try {
+		fs.mkdirSync(SETTINGS_DIR, { recursive: true });
+		fs.appendFileSync(LOG_FILE, line);
+	} catch {
+		// Non-critical — console.log already fired
+	}
+}
 
 // ── Settings Helpers ─────────────────────────────────────────
 
@@ -93,7 +112,7 @@ function saveSettings(settings: SlotSettings): void {
 		fs.mkdirSync(SETTINGS_DIR, { recursive: true });
 		fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2) + "\n");
 	} catch (err) {
-		console.warn("[llamacpp-slots] Failed to save settings:", (err as Error).message);
+		log(`[llamacpp-slots] Failed to save settings: ${(err as Error).message}`);
 	}
 }
 
@@ -131,7 +150,7 @@ async function discoverSlots(serverUrl: string): Promise<number | null> {
  * Get full slot info from GET /slots.
  * Returns the slot object (with state, n_prompt_tokens, etc.) or null if unavailable.
  */
-async function getSlotInfo(serverUrl: string, slotId: number): Promise<{ state?: string; n_prompt_tokens?: number } | null> {
+async function getSlotInfo(serverUrl: string, slotId: number): Promise<{ is_processing?: boolean; n_prompt_tokens?: number } | null> {
 	try {
 		const response = await fetch(`${serverUrl}/slots`, {
 			signal: AbortSignal.timeout(3000),
@@ -184,12 +203,12 @@ function saveSlot(state: SlotState): void {
 	})
 		.then(async (res) => {
 			if (!res.ok) {
-				console.error(`[llamacpp-slots] Save failed: HTTP ${res.status}`);
+				log(`[llamacpp-slots] Save failed: HTTP ${res.status}`);
 			}
 		})
 		.catch((err) => {
 			if (err.name !== "AbortError") {
-				console.error("[llamacpp-slots] Save error:", err.message);
+				log(`[llamacpp-slots] Save error: ${err.message}`);
 			}
 		});
 }
@@ -209,14 +228,14 @@ async function restoreSlot(state: SlotState): Promise<boolean> {
 			},
 		);
 		if (!response.ok) {
-			console.warn(
+			log(
 				`[llamacpp-slots] Restore failed: HTTP ${response.status} (file may not exist)`,
 			);
 			return false;
 		}
 		return true;
 	} catch (err) {
-		console.warn("[llamacpp-slots] Restore error:", (err as Error).message);
+		log(`[llamacpp-slots] Restore error: ${(err as Error).message}`);
 		return false;
 	}
 }
@@ -234,11 +253,11 @@ async function eraseSlot(state: SlotState): Promise<void> {
 			},
 		);
 		if (!response.ok) {
-			console.warn(`[llamacpp-slots] Erase failed: HTTP ${response.status}`);
+			log(`[llamacpp-slots] Erase failed: HTTP ${response.status}`);
 		}
 	} catch (err) {
 		// Server may already be shutting down
-		console.warn("[llamacpp-slots] Erase error:", (err as Error).message);
+		log(`[llamacpp-slots] Erase error: ${(err as Error).message}`);
 	}
 }
 
@@ -288,17 +307,17 @@ function deriveBinFilename(sessionId: string): string {
 // ── Extension Factory ────────────────────────────────────────
 
 export default function llamacppSlotsExtension(pi: ExtensionAPI): void {
-	console.log("[llamacpp-slots] Extension loaded!");
+	log("[llamacpp-slots] Extension loaded!");
 	// ── Session Start: Discover + Register Slot ───────────────
 
 	pi.on("session_start", async (_event, ctx) => {
-		console.log(`[llamacpp-slots] session_start fired, reason=${_event.reason}`);
+		log(`[llamacpp-slots] session_start fired, reason=${_event.reason}`);
 		// Determine server URL: settings override wins, then fall back to ctx.model.baseUrl
 		const settings = loadSettings();
-		console.log(`[llamacpp-slots] settings.serverUrl=${settings.serverUrl}, ctx.model.baseUrl=${ctx.model?.baseUrl}`);
+		log(`[llamacpp-slots] settings.serverUrl=${settings.serverUrl}, ctx.model.baseUrl=${ctx.model?.baseUrl}`);
 		let serverUrl: string | undefined;
 
-		ctx.ui.setStatus("llamacpp-slots", "checking...");
+		// ctx.ui.setStatus("llamacpp-slots", "checking...");
 
 		if (settings.serverUrl) {
 			serverUrl = settings.serverUrl.replace(/\/+$/, "");
@@ -309,11 +328,11 @@ export default function llamacppSlotsExtension(pi: ExtensionAPI): void {
 			}
 		}
 		if (!serverUrl) {
-			console.log("[llamacpp-slots] No server URL — staying dormant");
-			ctx.ui.setStatus("llamacpp-slots", "no server URL");
+			log("[llamacpp-slots] No server URL — staying dormant");
+			// ctx.ui.setStatus("llamacpp-slots", "no server URL");
 			return;
 		}
-		console.log(`[llamacpp-slots] session_start: serverUrl=${serverUrl}`);
+		log(`[llamacpp-slots] session_start: serverUrl=${serverUrl}`);
 
 		// Step 1: Try to restore persisted slot state from branch
 		const restored = restoreFromBranch(ctx);
@@ -327,23 +346,27 @@ export default function llamacppSlotsExtension(pi: ExtensionAPI): void {
 			slotsActive = true;
 			firstTurn = true;
 
+			log(`[llamacpp-slots] Restored slot state from branch: slot=${restored.slotId}, bin=${restored.binFilename}`);
+
 			// Quick probe to verify the server is reachable
 			const reachable = await isSlotCold(serverUrl, restored.slotId);
 			if (reachable !== null) {
-				ctx.ui.setStatus("llamacpp-slots", `slot ${slotState.slotId} ready`);
+				// ctx.ui.setStatus("llamacpp-slots", `slot ${slotState.slotId} ready`);
 			} else {
-				ctx.ui.setStatus("llamacpp-slots", `slot ${slotState.slotId} (server unreachable)`);
+				// ctx.ui.setStatus("llamacpp-slots", `slot ${slotState.slotId} (server unreachable)`);
 			}
 			return;
 		}
+
+		log("[llamacpp-slots] No persisted slot state in branch — discovering fresh");
 
 		// Step 2: No persisted state — discover slots fresh
 		const slotId = await discoverSlots(serverUrl);
 		if (slotId == null) {
 			// Server doesn't support slots or is unreachable — stay dormant
 			slotsActive = false;
-			ctx.ui.notify("llamacpp-slots: GET /slots failed — staying dormant", "warning");
-			ctx.ui.setStatus("llamacpp-slots", "discovery failed");
+			// ctx.ui.notify("llamacpp-slots: GET /slots failed — staying dormant", "warning");
+			// ctx.ui.setStatus("llamacpp-slots", "discovery failed");
 			return;
 		}
 
@@ -368,8 +391,9 @@ export default function llamacppSlotsExtension(pi: ExtensionAPI): void {
 
 		// Persist the new slot allocation
 		persistSlotState(pi);
-		ctx.ui.notify(`llamacpp-slots: allocated slot ${slotState.slotId}`, "info");
-		ctx.ui.setStatus("llamacpp-slots", `slot ${slotState.slotId} allocated`);
+		log(`[llamacpp-slots] Allocated slot ${slotState.slotId} for session ${sessionId} (bin=${slotState.binFilename})`);
+		// ctx.ui.notify(`llamacpp-slots: allocated slot ${slotState.slotId}`, "info");
+		// ctx.ui.setStatus("llamacpp-slots", `slot ${slotState.slotId} allocated`);
 	});
 
 	// ── Session Shutdown: Final Save + Conditional Erase ──────
@@ -391,11 +415,11 @@ export default function llamacppSlotsExtension(pi: ExtensionAPI): void {
 					},
 				);
 				if (response.ok) {
-					console.log(`[llamacpp-slots] Final save: ${slotState.binFilename}`);
+					log(`[llamacpp-slots] Final save: ${slotState.binFilename}`);
 				}
 			} catch (err) {
 				// Server may already be shutting down
-				console.warn("[llamacpp-slots] Final save error:", (err as Error).message);
+				log(`[llamacpp-slots] Final save error: ${(err as Error).message}`);
 			}
 		}
 
@@ -404,45 +428,59 @@ export default function llamacppSlotsExtension(pi: ExtensionAPI): void {
 			const settings = loadSettings();
 			if (settings.eraseOnQuit) {
 				await eraseSlot(slotState);
-				console.log("[llamacpp-slots] Erased slot KV cache (eraseOnQuit=true)");
+				log("[llamacpp-slots] Erased slot KV cache (eraseOnQuit=true)");
 			}
 		}
 
 		// Persist final state
 		persistSlotState(pi);
+		log(`[llamacpp-slots] session_shutdown (reason=${_event.reason}): persisted slot ${slotState.slotId}, bin=${slotState.binFilename}`);
 	});
 
-	// ── Turn Start: Restore Slot (ensures KV cache is loaded before first request) ──
+	// ── Turn Start: Restore Slot if Cold (ensures KV cache is loaded before requests) ──
 
 	pi.on("turn_start", async (_event, ctx) => {
 		if (!slotsActive || !slotState) return;
 		const state = slotState;  // Capture for TS narrowing across awaits
 
-		// Always restore on every turn start. llama.cpp's restore is idempotent —
-		// it's a no-op if the slot's KV cache already matches the .bin file.
-		// This is more reliable than trying to detect "cold" via n_prompt_tokens,
-		// which is 0 both after a restart AND after a successful restore.
 		const slotInfo = await getSlotInfo(state.serverUrl, state.slotId);
+		const nTokens = slotInfo?.n_prompt_tokens;
 
-		if (slotInfo?.state === "processing") {
+		if (slotInfo?.is_processing) {
 			// Slot is actively processing — skip restore to avoid interference.
-			// This can happen on subsequent turns if the previous turn's
-			// generation is still in-flight.
-			console.log(`[llamacpp-slots] Slot ${state.slotId} is processing — skipping restore`);
-		} else {
-			// Restore the slot. On first turn after llama.cpp restart, this loads
-			// the KV cache from disk. On warm slots, this is a fast no-op.
-			console.log(
-				`[llamacpp-slots] turn_start: restoring slot ${state.slotId} ` +
-				`(state=${slotInfo?.state ?? "unknown"}, n_prompt_tokens=${slotInfo?.n_prompt_tokens ?? "?"})`,
-			);
+			log(`[llamacpp-slots] Slot ${state.slotId} is processing — skipping restore`);
+		} else if (firstTurn) {
+			// First turn after session_start: always restore.
+			// n_prompt_tokens is unreliable here — it's only reported when
+			// task or task_prev exists, and may be missing even on warm slots.
+			// Restoring is safe: if the .bin exists, it loads the KV cache;
+			// if not, llama.cpp returns an error and we proceed normally.
+			log(`[llamacpp-slots] Slot ${state.slotId} first turn — restoring`);
 			restoringPromise = restoreSlot(state).then((ok) => {
 				if (ok) {
-					console.log(`[llamacpp-slots] Restored slot ${state.slotId} from ${state.binFilename}`);
-					ctx.ui.setStatus("llamacpp-slots", `slot ${state.slotId} restored`);
+					log(`[llamacpp-slots] Restored slot ${state.slotId} from ${state.binFilename}`);
+					// ctx.ui.setStatus("llamacpp-slots", `slot ${state.slotId} restored`);
 				} else {
-					console.warn(`[llamacpp-slots] Restore failed for slot ${state.slotId}`);
-					ctx.ui.setStatus("llamacpp-slots", `slot ${state.slotId} restore failed`);
+					log(`[llamacpp-slots] Restore failed for slot ${state.slotId} (file may not exist)`);
+					// ctx.ui.setStatus("llamacpp-slots", `slot ${state.slotId} restore failed`);
+				}
+				restoringPromise = null;
+				return ok;
+			});
+			await restoringPromise;
+		} else if (nTokens != null && nTokens > 0) {
+			// Subsequent turn, slot has tokens — warm, skip restore.
+			log(`[llamacpp-slots] Slot ${state.slotId} warm (n_prompt_tokens=${nTokens}) — skipping restore`);
+		} else {
+			// Subsequent turn, slot is cold (llama.cpp restarted mid-session).
+			log(`[llamacpp-slots] Slot ${state.slotId} cold (n_prompt_tokens=${nTokens ?? "?"}) — restoring`);
+			restoringPromise = restoreSlot(state).then((ok) => {
+				if (ok) {
+					log(`[llamacpp-slots] Restored slot ${state.slotId} from ${state.binFilename}`);
+					// ctx.ui.setStatus("llamacpp-slots", `slot ${state.slotId} restored`);
+				} else {
+					log(`[llamacpp-slots] Restore failed for slot ${state.slotId}`);
+					// ctx.ui.setStatus("llamacpp-slots", `slot ${state.slotId} restore failed`);
 				}
 				restoringPromise = null;
 				return ok;
@@ -459,6 +497,7 @@ export default function llamacppSlotsExtension(pi: ExtensionAPI): void {
 	pi.on("turn_end", async (_event, _ctx) => {
 		if (!slotsActive || !slotState) return;
 		// Fire-and-forget: do NOT await — saveSlot uses unawaited fetch()
+		log(`[llamacpp-slots] turn_end: saving slot ${slotState.slotId} to ${slotState.binFilename}`);
 		saveSlot(slotState);
 	});
 
@@ -470,7 +509,7 @@ export default function llamacppSlotsExtension(pi: ExtensionAPI): void {
 		// wait for it before sending the request. Prevents the race where
 		// before_provider_request fires before restoreSlot completes.
 		if (restoringPromise) {
-			console.log("[llamacpp-slots] before_provider_request: waiting for restore to complete");
+			log("[llamacpp-slots] before_provider_request: waiting for restore to complete");
 			await restoringPromise;
 		}
 		// Inject id_slot into the provider payload for deterministic slot routing.

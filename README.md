@@ -75,8 +75,10 @@ pi starts / reloads
   ├─► turn_start (every turn)
   │   ├─► GET /slots → check slot state
   │   ├─► processing → skip restore (avoid interference)
-  │   └─► otherwise  → POST /slots/{id}?action=restore + await
-  │       (idempotent: no-op if cache already matches .bin)
+  │   ├─► first turn → always restore (n_prompt_tokens unreliable after reload)
+  │   ├─► tokens > 0 → skip restore (slot is warm)
+  │   └─► tokens == 0 → POST /slots/{id}?action=restore + await
+  │       (loads KV cache from .bin after mid-session llama.cpp restart)
   │
   ├─► before_provider_request (every request)
   │   ├─► Wait for in-flight restore (if any)  ← prevents race with turn_start
@@ -114,21 +116,18 @@ Files are stored in your llama.cpp `--slot-save-path` directory.
 
 - Slot saves are fire-and-forget with a 3-second timeout — never block the agent loop
 - `GET /slots` probe at startup adds ~50ms
-- Restore on every turn: GET /slots (~50ms) + POST restore (~10-100ms, idempotent)
+- Restore check on every turn: GET /slots (~50ms)
+- Actual restore on first turn: POST restore (~10-100ms, reads .bin and loads KV cache)
+- Subsequent turns skip restore when slot is warm (no disk I/O)
 - `id_slot` injection is synchronous and trivial
 
-## Status Messages
+## Debug Log
 
-The extension shows its state in the pi footer status bar:
+All extension events are logged to `~/.pi/agent/llama-slots/debug.log` (append-only, ISO timestamps). Footer status messages are disabled — use the log file to monitor the extension:
 
-| Status | Meaning |
-|--------|---------|
-| `slot 0 ready` | Slot registered, server reachable — restore pending on next turn |
-| `slot 0 restored` | KV cache loaded from `.bin` |
-| `slot 0 restore failed` | Restore call failed (file may not exist) |
-| `slot 0 allocated` | Fresh slot assigned for new session |
-| `discovery failed` | `GET /slots` failed — extension dormant |
-| `no server URL` | Can't determine llama.cpp server address |
+```bash
+tail -f ~/.pi/agent/llama-slots/debug.log
+```
 
 ## Development
 
@@ -146,13 +145,13 @@ Extensions are loaded via [jiti](https://github.com/unjs/jiti) — no compilatio
 
 ### Extension stays dormant
 
-Check the pi footer status bar for `llamacpp-slots: ...`. Possible states:
+Check the debug log for clues:
 
-| Status | Cause | Fix |
-|--------|-------|-----|
-| `no server URL` | No `serverUrl` in settings and no `ctx.model.baseUrl` | Set `serverUrl` in settings or configure a provider |
-| `discovery failed` | `GET /slots` returned non-200 or timed out | Verify llama.cpp is running with `--slots` flag |
-| *(no status)* | Extension failed to load | Check for TypeScript errors: `npx tsc --noEmit` |
+| Log message | Cause | Fix |
+|-------------|-------|-----|
+| `No server URL — staying dormant` | No `serverUrl` in settings and no `ctx.model.baseUrl` | Set `serverUrl` in settings or configure a provider |
+| `GET /slots failed — staying dormant` | `GET /slots` returned non-200 or timed out | Verify llama.cpp is running with `--slots` flag |
+| *(no log at all)* | Extension failed to load | Check for TypeScript errors: `npx tsc --noEmit` |
 
 ### Proxying through litellm
 
@@ -172,16 +171,20 @@ Verify llama.cpp is started with `--slot-save-path /path/to/dir` and that the di
 
 As of v1.0.1, `/reload` no longer triggers a save (which could overwrite the `.bin` with incomplete state). Per-turn saves via `turn_end` are the authoritative source.
 
-### Repeated restore messages between tool calls
+### Restore messages in the logs
 
-It's normal to see restore messages multiple times within a single agent turn:
+You'll see messages like these:
 
 ```
-[llamacpp-slots] turn_start: restoring slot 0 (state=unknown, n_prompt_tokens=55526)
+[llamacpp-slots] Slot 0 first turn — restoring
 [llamacpp-slots] Restored slot 0 from session_....bin
+[llamacpp-slots] Slot 0 warm (n_prompt_tokens=55526) — skipping restore
+[llamacpp-slots] Slot 0 cold (n_prompt_tokens=0) — restoring
 ```
 
-This happens because pi fires `turn_start` once per **sub-turn** (each tool call, each provider request within a multi-step agent loop). The restore is idempotent — on the second call the slot is already warm, so llama.cpp returns immediately without reloading the `.bin` file. The `n_prompt_tokens` value shows how many tokens the slot currently has cached (grows as the conversation progresses).
+- **"first turn — restoring"** appears on the first turn after pi starts or reloads. The restore ensures the KV cache is loaded, since `n_prompt_tokens` can be missing from `GET /slots` even on warm slots (it's only reported when the slot has an active or previous task).
+- **"warm — skipping restore"** means the slot already has tokens — no disk I/O.
+- **"cold — restoring"** appears after a mid-session llama.cpp restart. This is rare and only happens if you restart llama.cpp without reloading pi.
 
 ## License
 
