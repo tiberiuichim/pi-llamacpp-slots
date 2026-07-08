@@ -341,22 +341,26 @@ export default function llamacppSlotsExtension(pi: ExtensionAPI): void {
 	pi.on("session_shutdown", async (_event, ctx) => {
 		if (!slotState) return;
 
-		// Final save before shutdown (awaited — session_shutdown handlers block shutdown)
-		try {
-			const response = await fetch(
-				`${slotState.serverUrl}/slots/${slotState.slotId}?action=save`,
-				{
-					method: "POST",
-					headers: { "Content-Type": "application/json" },
-					body: JSON.stringify({ filename: slotState.binFilename }),
-				},
-			);
-			if (response.ok) {
-				console.log(`[llamacpp-slots] Final save: ${slotState.binFilename}`);
+		// Final save before shutdown — skip on "reload" to avoid overwriting
+		// the .bin with incomplete state (turn_end already handles per-turn saves).
+		// On reload the agent loop is torn down and the slot may have minimal context.
+		if (_event.reason !== "reload") {
+			try {
+				const response = await fetch(
+					`${slotState.serverUrl}/slots/${slotState.slotId}?action=save`,
+					{
+						method: "POST",
+						headers: { "Content-Type": "application/json" },
+						body: JSON.stringify({ filename: slotState.binFilename }),
+					},
+				);
+				if (response.ok) {
+					console.log(`[llamacpp-slots] Final save: ${slotState.binFilename}`);
+				}
+			} catch (err) {
+				// Server may already be shutting down
+				console.warn("[llamacpp-slots] Final save error:", (err as Error).message);
 			}
-		} catch (err) {
-			// Server may already be shutting down
-			console.warn("[llamacpp-slots] Final save error:", (err as Error).message);
 		}
 
 		// Erase in-memory KV cache only on quit AND only if configured
