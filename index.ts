@@ -54,6 +54,7 @@ interface SlotSettings {
 let slotState: SlotState | null = null;
 let slotsActive = false;
 let saveController: AbortController | null = null;
+let slotVerified = false;  // Whether we've confirmed the slot is warm in this session
 
 // ── Constants ────────────────────────────────────────────────
 
@@ -322,20 +323,24 @@ export default function llamacppSlotsExtension(pi: ExtensionAPI): void {
 					console.log(`[llamacpp-slots] Restored cold slot ${slotState.slotId} from ${slotState.binFilename}`);
 					ctx.ui.notify(`llamacpp-slots: restored slot ${slotState.slotId} (was cold)`, "info");
 					ctx.ui.setStatus("llamacpp-slots", `slot ${slotState.slotId} restored`);
+					slotVerified = true;
 				} else {
 					console.warn(`[llamacpp-slots] Slot ${slotState.slotId} is cold but restore failed`);
 					ctx.ui.notify(`llamacpp-slots: slot ${slotState.slotId} cold, restore failed`, "warning");
 					ctx.ui.setStatus("llamacpp-slots", `slot ${slotState.slotId} cold`);
+					slotVerified = false; // Will retry on first turn
 				}
 			} else if (cold === false) {
 				// Slot is warm — no restore needed
 				console.log(`[llamacpp-slots] Slot ${slotState.slotId} is warm — skipping restore`);
 				ctx.ui.setStatus("llamacpp-slots", `slot ${slotState.slotId} warm`);
+				slotVerified = true;
 			} else {
 				// Could not determine — try restore anyway (safe no-op if cache is warm)
 				await restoreSlot(slotState);
 				console.log(`[llamacpp-slots] Slot ${slotState.slotId} state unknown — restored as fallback`);
 				ctx.ui.setStatus("llamacpp-slots", `slot ${slotState.slotId} restored`);
+				slotVerified = true; // Best effort
 			}
 			return;
 		}
@@ -367,6 +372,7 @@ export default function llamacppSlotsExtension(pi: ExtensionAPI): void {
 			serverUrl,
 		};
 		slotsActive = true;
+		slotVerified = false; // New slot — verify warmth on first turn
 
 		// Persist the new slot allocation
 		persistSlotState(pi);
@@ -412,6 +418,24 @@ export default function llamacppSlotsExtension(pi: ExtensionAPI): void {
 
 		// Persist final state
 		persistSlotState(pi);
+	});
+
+	// ── Turn Start: Verify Slot Warmth (mid-session restart safety net) ──
+
+	pi.on("turn_start", async (_event, _ctx) => {
+		if (!slotsActive || !slotState || slotVerified) return;
+		// Slot hasn't been verified warm yet — check and restore if cold.
+		// This handles the case where llama.cpp restarted mid-session
+		// (no session_start fired, so isSlotCold wasn't called).
+		const cold = await isSlotCold(slotState.serverUrl, slotState.slotId);
+		if (cold === true) {
+			console.log(`[llamacpp-slots] Slot ${slotState.slotId} is cold on turn_start — restoring`);
+			await restoreSlot(slotState);
+		} else if (cold === null) {
+			// Can't reach server — try restore as fallback
+			await restoreSlot(slotState);
+		}
+		slotVerified = true;
 	});
 
 	// ── Turn End: Fire-and-Forget Slot Save ──────────────────
