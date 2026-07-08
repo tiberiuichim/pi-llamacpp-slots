@@ -111,7 +111,7 @@ pi starts / reloads
 | Restart llama.cpp, type prompt (no `/reload`) | `turn_start` restores from `.bin` before first request |
 | Restart llama.cpp + pi together | `turn_start` restores from `.bin` before first request |
 
-Restore always happens in `turn_start` (not `session_start`) because that's when llama.cpp is guaranteed to be fully loaded and ready.
+Restore happens in `turn_start` (right before the first provider request) rather than `session_start`, so the cache is loaded as close as possible to when it's needed. It also acts as a fallback if the `session_start` server probe fails (e.g., llama.cpp still booting).
 
 ### Slot filenames
 
