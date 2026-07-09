@@ -56,6 +56,7 @@ Optional settings file at `~/.pi/agent/llama-slots/settings.json` (create the di
 |---------|------|---------|-------------|
 | `eraseOnQuit` | `boolean` | `false` | Erase in-memory KV cache on quit. Keep `false` to preserve warm cache across restarts. |
 | `saveOnAgentEnd` | `boolean` | `true` | Save once per agent loop (`agent_end`) instead of per tool call (`turn_end`). Set `false` for more frequent saves. |
+| `saveOnShutdown` | `boolean` | `false` | Save slot on session shutdown (quit). Per-turn saves are usually sufficient, so this is off by default. |
 | `serverUrl` | `string` | *(derived)* | Override the llama.cpp server URL. By default, derived from `ctx.model.baseUrl`. Set this when proxying through litellm or another reverse proxy. |
 
 ### Server URL resolution
@@ -99,7 +100,7 @@ pi starts / reloads
   │   └─► if saveOnAgentEnd=true (default) → POST /slots/{id}?action=save
   │       (fire-and-forget, 3s timeout)
   └─► session_shutdown
-      ├─► POST /slots/{id}?action=save  ← final save (skipped on /reload)
+      ├─► POST /slots/{id}?action=save  ← only if saveOnShutdown=true (skipped on /reload)
       └─► POST /slots/{id}?action=erase  ← only on quit + eraseOnQuit=true
 ```
 
@@ -178,9 +179,9 @@ litellm doesn't proxy `/slots` requests. Set `serverUrl` in settings to point di
 
 Verify llama.cpp is started with `--slot-save-path /path/to/dir` and that the directory is writable.
 
-### Cache lost after `/reload`
+### Cache lost after `/reload` or quit
 
-As of v1.0.1, `/reload` no longer triggers a save (which could overwrite the `.bin` with incomplete state). Per-turn saves via `turn_end` are the authoritative source.
+`/reload` never triggers a final save (which could overwrite the `.bin` with incomplete state). Quit also skips the final save by default (`saveOnShutdown=false`). Per-turn saves via `turn_end`/`agent_end` are the authoritative source. Set `saveOnShutdown=true` if you want an extra safety net on quit.
 
 ### Restore messages in the logs
 

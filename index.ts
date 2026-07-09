@@ -49,6 +49,8 @@ interface SlotSettings {
 	serverUrl?: string;
 	/** Save slot on agent_end (once per agent loop) instead of turn_end (per tool call). Default: true. */
 	saveOnAgentEnd?: boolean;
+	/** Save slot on session shutdown (quit). Default: false — per-turn/agent saves are usually sufficient. */
+	saveOnShutdown?: boolean;
 }
 
 // ── In-Memory State ──────────────────────────────────────────
@@ -92,7 +94,7 @@ function log(message: string): void {
  * Returns defaults if the file doesn't exist or is invalid.
  */
 function loadSettings(): SlotSettings {
-	const defaults: SlotSettings = { eraseOnQuit: false, saveOnAgentEnd: true };
+	const defaults: SlotSettings = { eraseOnQuit: false, saveOnAgentEnd: true, saveOnShutdown: false };
 	try {
 		const raw = fs.readFileSync(SETTINGS_FILE, "utf-8");
 		const parsed = JSON.parse(raw) as SlotSettings;
@@ -100,6 +102,7 @@ function loadSettings(): SlotSettings {
 			eraseOnQuit: parsed.eraseOnQuit ?? defaults.eraseOnQuit,
 			serverUrl: parsed.serverUrl,
 			saveOnAgentEnd: parsed.saveOnAgentEnd ?? defaults.saveOnAgentEnd,
+			saveOnShutdown: parsed.saveOnShutdown ?? defaults.saveOnShutdown,
 		};
 	} catch {
 		return defaults;
@@ -404,10 +407,11 @@ export default function llamacppSlotsExtension(pi: ExtensionAPI): void {
 	pi.on("session_shutdown", async (_event, ctx) => {
 		if (!slotState) return;
 
-		// Final save before shutdown — skip on "reload" to avoid overwriting
-		// the .bin with incomplete state (turn_end already handles per-turn saves).
-		// On reload the agent loop is torn down and the slot may have minimal context.
-		if (_event.reason !== "reload") {
+		const settings = loadSettings();
+
+		// Optional final save before shutdown (disabled by default).
+		// Per-turn saves via turn_end/agent_end are usually sufficient.
+		if (settings.saveOnShutdown && _event.reason !== "reload") {
 			try {
 				const response = await fetch(
 					`${slotState.serverUrl}/slots/${slotState.slotId}?action=save`,
@@ -427,12 +431,9 @@ export default function llamacppSlotsExtension(pi: ExtensionAPI): void {
 		}
 
 		// Erase in-memory KV cache only on quit AND only if configured
-		if (_event.reason === "quit") {
-			const settings = loadSettings();
-			if (settings.eraseOnQuit) {
-				await eraseSlot(slotState);
-				log("[llamacpp-slots] Erased slot KV cache (eraseOnQuit=true)");
-			}
+		if (_event.reason === "quit" && settings.eraseOnQuit) {
+			await eraseSlot(slotState);
+			log("[llamacpp-slots] Erased slot KV cache (eraseOnQuit=true)");
 		}
 
 		// Persist final state
