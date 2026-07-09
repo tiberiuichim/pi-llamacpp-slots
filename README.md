@@ -91,7 +91,8 @@ pi starts / reloads
   ├─► turn_start (every turn)
   │   ├─► GET /slots → check slot state
   │   ├─► processing → skip restore (avoid interference)
-  │   ├─► first turn → always restore (n_prompt_tokens unreliable after reload)
+  │   ├─► first turn + new session → skip restore (no .bin exists yet)
+  │   ├─► first turn + resumed session → restore (n_prompt_tokens unreliable after reload)
   │   ├─► tokens == 0 → POST /slots/{id}?action=restore + await
   │   │   (loads KV cache from .bin after mid-session llama.cpp restart)
   │   └─► tokens > 0 or missing → skip restore (warm or idle)
@@ -195,6 +196,7 @@ Verify llama.cpp is started with `--slot-save-path /path/to/dir` and that the di
 You'll see messages like these:
 
 ```
+[llamacpp-slots] Slot 0 first turn of new session — skipping restore (no .bin yet)
 [llamacpp-slots] Slot 0 first turn — restoring
 [llamacpp-slots] Restored slot 0 from session_....bin
 [llamacpp-slots] Slot 0 warm (n_prompt_tokens=55526) — skipping restore
@@ -202,7 +204,8 @@ You'll see messages like these:
 [llamacpp-slots] Slot 0 cold (n_prompt_tokens=0) — restoring
 ```
 
-- **"first turn — restoring"** appears on the first turn after pi starts or reloads. The restore ensures the KV cache is loaded, since `n_prompt_tokens` can be missing from `GET /slots` even on warm slots (it's only reported when the slot has an active or previous task).
+- **"first turn of new session — skipping restore"** appears on the first turn of a brand-new session. No `.bin` file exists yet (first save hasn't happened), so restore is skipped to avoid the llama.cpp "failed to open .bin" error.
+- **"first turn — restoring"** appears on the first turn of a resumed session. The restore ensures the KV cache is loaded, since `n_prompt_tokens` can be missing from `GET /slots` even on warm slots (it's only reported when the slot has an active or previous task).
 - **"warm — skipping restore"** means the slot has tokens (`n_prompt_tokens > 0`) or is idle (field missing, `task_prev=null`) — no disk I/O.
 - **"cold — restoring"** appears after a mid-session llama.cpp restart. This is rare and only happens if you restart llama.cpp without reloading pi.
 

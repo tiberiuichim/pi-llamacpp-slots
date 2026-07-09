@@ -60,6 +60,7 @@ let slotsActive = false;
 let saveController: AbortController | null = null;
 let restoringPromise: Promise<boolean> | null = null;  // In-flight restore promise for race prevention
 let firstTurn = true;  // Track if this is the first turn of the session
+let isNewSession = false;  // True when no persisted slot state was found (brand-new session)
 
 // ── Constants ────────────────────────────────────────────────
 
@@ -444,6 +445,7 @@ export default function llamacppSlotsExtension(pi: ExtensionAPI): void {
 			firstTurn = true;
 
 			log(`[llamacpp-slots] Restored slot state from branch: slot=${restored.slotId}, bin=${restored.binFilename}`);
+			isNewSession = false;
 
 			// Quick probe to verify the server is reachable
 			const reachable = await isSlotCold(serverUrl, restored.slotId);
@@ -485,6 +487,7 @@ export default function llamacppSlotsExtension(pi: ExtensionAPI): void {
 		};
 		slotsActive = true;
 		firstTurn = true;
+		isNewSession = true;
 
 		// Persist the new slot allocation
 		persistSlotState(pi);
@@ -544,12 +547,13 @@ export default function llamacppSlotsExtension(pi: ExtensionAPI): void {
 		if (slotInfo?.is_processing) {
 			// Slot is actively processing — skip restore to avoid interference.
 			log(`[llamacpp-slots] Slot ${state.slotId} is processing — skipping restore`);
-		} else if (firstTurn) {
-			// First turn after session_start: always restore.
+		} else if (firstTurn && isNewSession) {
+			// First turn of a new session — no .bin file exists yet, skip restore.
+			log(`[llamacpp-slots] Slot ${state.slotId} first turn of new session — skipping restore (no .bin yet)`);
+		} else if (firstTurn && !isNewSession) {
+			// First turn of a resumed session: restore from .bin.
 			// n_prompt_tokens is unreliable here — it's only reported when
 			// task or task_prev exists, and may be missing even on warm slots.
-			// Restoring is safe: if the .bin exists, it loads the KV cache;
-			// if not, llama.cpp returns an error and we proceed normally.
 			log(`[llamacpp-slots] Slot ${state.slotId} first turn — restoring`);
 			restoringPromise = restoreSlot(state).then((ok) => {
 				if (ok) {
