@@ -52,6 +52,13 @@ Optional settings file at `~/.pi/agent/llama-slots/settings.json` (create the di
 }
 ```
 
+Or use the `/llama-slots` slash command to toggle boolean settings interactively:
+
+```
+/llama-slots              ← open settings menu
+/llama-slots saveOnShutdown  ← toggle directly
+```
+
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
 | `eraseOnQuit` | `boolean` | `false` | Erase in-memory KV cache on quit. Keep `false` to preserve warm cache across restarts. |

@@ -312,8 +312,75 @@ function deriveBinFilename(sessionId: string): string {
 
 // ── Extension Factory ────────────────────────────────────────
 
+// ── Slash Command: /llama-slots ─────────────────────────────
+
+/** Toggle items for the settings selector */
+const TOGGLE_OPTIONS = [
+	{ key: "eraseOnQuit" as const, label: "eraseOnQuit", description: "Erase in-memory KV cache on quit" },
+	{ key: "saveOnAgentEnd" as const, label: "saveOnAgentEnd", description: "Save once per agent loop instead of per tool call" },
+	{ key: "saveOnShutdown" as const, label: "saveOnShutdown", description: "Save slot on session shutdown" },
+] as const;
+
 export default function llamacppSlotsExtension(pi: ExtensionAPI): void {
 	log("[llamacpp-slots] Extension loaded!");
+
+	// ── Command: /llama-slots ────────────────────────────────
+
+	pi.registerCommand("llama-slots", {
+		description: "Configure llama.cpp slots extension settings",
+		getArgumentCompletions: (prefix) => {
+			const keys = TOGGLE_OPTIONS.map((o) => o.key);
+			const filtered = keys.filter((k) => k.startsWith(prefix));
+			return filtered.length > 0 ? filtered.map((k) => ({ value: k, label: k })) : null;
+		},
+		handler: async (args, ctx) => {
+			const settings = loadSettings();
+
+			// Direct toggle: /llama-slots saveOnShutdown
+			const arg = args?.trim();
+			if (arg) {
+				const option = TOGGLE_OPTIONS.find((o) => o.key === arg);
+				if (!option) {
+					ctx.ui.notify(`Unknown option "${arg}". Available: ${TOGGLE_OPTIONS.map((o) => o.key).join(", ")}`, "error");
+					return;
+				}
+				const current = settings[option.key] ?? false;
+				settings[option.key] = !current;
+				saveSettings(settings);
+				ctx.ui.notify(`${option.key}: ${!current}`, "info");
+				log(`[llamacpp-slots] ${option.key} toggled to ${!current}`);
+				return;
+			}
+
+			// Show settings menu
+			const items = TOGGLE_OPTIONS.map((opt) => {
+				const value = settings[opt.key] ?? false;
+				return `${opt.key}: ${value}  (${opt.description})`;
+			});
+			items.push("---");
+			items.push("View settings file");
+
+			const selected = await ctx.ui.select("llama.cpp Slots Settings", items);
+			if (!selected) return;
+
+			if (selected === "View settings file") {
+				ctx.ui.notify(`Edit: ${SETTINGS_FILE}`, "info");
+				return;
+			}
+
+			// Parse the toggled key from the selected line
+			const key = selected.split(":")[0].trim() as "eraseOnQuit" | "saveOnAgentEnd" | "saveOnShutdown";
+			const option = TOGGLE_OPTIONS.find((o) => o.key === key);
+			if (!option) return;
+
+			const current = settings[key] ?? false;
+			settings[key] = !current;
+			saveSettings(settings);
+			ctx.ui.notify(`${key}: ${!current}`, "info");
+			log(`[llamacpp-slots] ${key} toggled to ${!current}`);
+		},
+	});
+
 	// ── Session Start: Discover + Register Slot ───────────────
 
 	pi.on("session_start", async (_event, ctx) => {
