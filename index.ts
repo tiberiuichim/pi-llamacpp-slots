@@ -364,7 +364,31 @@ export default function llamacppSlotsExtension(pi: ExtensionAPI): void {
 			if (!selected) return;
 
 			if (selected === "View settings file") {
-				ctx.ui.notify(`Edit: ${SETTINGS_FILE}`, "info");
+				// Read current file contents (or show empty object if not created yet)
+				let currentContent = "{}";
+				try {
+					currentContent = fs.readFileSync(SETTINGS_FILE, "utf-8");
+				} catch {
+					// File doesn't exist yet — show formatted empty object
+					currentContent = JSON.stringify({}, null, 2) + "\n";
+				}
+				const edited = await ctx.ui.editor(
+					`Edit settings (${SETTINGS_FILE})`,
+					currentContent,
+				);
+				if (edited !== undefined) {
+					// Validate JSON before saving
+					try {
+						JSON.parse(edited);
+						fs.mkdirSync(SETTINGS_DIR, { recursive: true });
+						fs.writeFileSync(SETTINGS_FILE, edited.endsWith("\n") ? edited : edited + "\n");
+						ctx.ui.notify("Settings saved", "info");
+						log(`[llamacpp-slots] Settings file saved`);
+					} catch (err) {
+						ctx.ui.notify(`Invalid JSON: ${(err as Error).message}`, "error");
+						log(`[llamacpp-slots] Settings save failed: invalid JSON`);
+					}
+				}
 				return;
 			}
 
