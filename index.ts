@@ -73,18 +73,17 @@ const LOG_FILE = path.join(SETTINGS_DIR, "debug.log");
 // ── Logging ──────────────────────────────────────────────────
 
 /**
- * Log a message to both console and debug.log file.
+ * Log a message to the debug.log file only.
  * The log file is append-only and lives at ~/.pi/agent/llama-slots/debug.log.
  */
 function log(message: string): void {
 	const timestamp = new Date().toISOString();
 	const line = `[${timestamp}] ${message}\n`;
-	console.log(message);
 	try {
 		fs.mkdirSync(SETTINGS_DIR, { recursive: true });
 		fs.appendFileSync(LOG_FILE, line);
 	} catch {
-		// Non-critical — console.log already fired
+		// Non-critical — silent failure
 	}
 }
 
@@ -342,13 +341,12 @@ export default function llamacppSlotsExtension(pi: ExtensionAPI): void {
 			if (arg) {
 				const option = TOGGLE_OPTIONS.find((o) => o.key === arg);
 				if (!option) {
-					ctx.ui.notify(`Unknown option "${arg}". Available: ${TOGGLE_OPTIONS.map((o) => o.key).join(", ")}`, "error");
+					log(`[llamacpp-slots] Unknown option "${arg}". Available: ${TOGGLE_OPTIONS.map((o) => o.key).join(", ")}`);
 					return;
 				}
 				const current = settings[option.key] ?? false;
 				settings[option.key] = !current;
 				saveSettings(settings);
-				ctx.ui.notify(`${option.key}: ${!current}`, "info");
 				log(`[llamacpp-slots] ${option.key} toggled to ${!current}`);
 				return;
 			}
@@ -383,10 +381,8 @@ export default function llamacppSlotsExtension(pi: ExtensionAPI): void {
 						JSON.parse(edited);
 						fs.mkdirSync(SETTINGS_DIR, { recursive: true });
 						fs.writeFileSync(SETTINGS_FILE, edited.endsWith("\n") ? edited : edited + "\n");
-						ctx.ui.notify("Settings saved", "info");
 						log(`[llamacpp-slots] Settings file saved`);
 					} catch (err) {
-						ctx.ui.notify(`Invalid JSON: ${(err as Error).message}`, "error");
 						log(`[llamacpp-slots] Settings save failed: invalid JSON`);
 					}
 				}
@@ -401,7 +397,6 @@ export default function llamacppSlotsExtension(pi: ExtensionAPI): void {
 			const current = settings[key] ?? false;
 			settings[key] = !current;
 			saveSettings(settings);
-			ctx.ui.notify(`${key}: ${!current}`, "info");
 			log(`[llamacpp-slots] ${key} toggled to ${!current}`);
 		},
 	});
